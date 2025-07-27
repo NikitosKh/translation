@@ -1,18 +1,28 @@
 {
   "manifest_version": 3,
-  "name": "GPT Translator",
-  "version": "2.0",
-  "description": "Beautiful AI-powered webpage translator",
-  "permissions": ["activeTab", "storage", "tabs"],
-  "action": {
-    "default_popup": "popup.html"
-  },
-  "content_scripts": [{
-    "matches": ["<all_urls>"],
-    "js": ["content.js"],
-    "run_at": "document_end"
-  }],
+  "name": "ChatGPT Web Translator",
+  "version": "1.0",
+  "description": "Automatically translate web pages using ChatGPT API",
+  "permissions": [
+    "activeTab",
+    "storage",
+    "scripting"
+  ],
+  "host_permissions": [
+    "https://api.openai.com/*",
+    "<all_urls>"
+  ],
   "background": {
     "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content.js"]
+    }
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "ChatGPT Translator"
   }
 }
