@@ -1,95 +1,210 @@
-let translationCache = new Map();
-let isTranslating = false;
-let originalTexts = new Map();
+class WebPageTranslator {
+  constructor() {
+    this.isTranslating = false;
+    this.originalTexts = new Map();
+    this.translatedTexts = new Map();
+    this.autoTranslateEnabled = false;
+    this.observer = null;
+    this.init();
+  }
 
-// Enhanced text node collector with better filtering
-function collectTextNodes() {
-  const nodes = [];
-  const walker = document.createTreeWalker(
-    document.body,
-    NodeFilter.SHOW_TEXT,
-    {
-      acceptNode: (node) => {
-        // Skip if parent is script, style, or contenteditable
-        const parent = node.parentElement;
-        if (!parent) return NodeFilter.FILTER_REJECT;
-        
-        const tagName = parent.tagName;
-        if (['SCRIPT', 'STYLE', 'NOSCRIPT', 'IFRAME', 'OBJECT', 'EMBED'].includes(tagName)) {
-          return NodeFilter.FILTER_REJECT;
+  async init() {
+    // Load settings
+    const settings = await chrome.storage.sync.get(['autoTranslate']);
+    this.autoTranslateEnabled = settings.autoTranslate || false;
+    
+    if (this.autoTranslateEnabled) {
+      this.startAutoTranslate();
+    }
+
+    // Listen for messages from popup
+    chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+      this.handleMessage(message);
+    });
+  }
+
+  handleMessage(message) {
+    switch (message.action) {
+      case 'translatePage':
+        this.translatePage(message.apiKey, message.targetLanguage);
+        break;
+      case 'toggleAutoTranslate':
+        this.toggleAutoTranslate(message.enabled);
+        break;
+    }
+  }
+
+  toggleAutoTranslate(enabled) {
+    this.autoTranslateEnabled = enabled;
+    
+    if (enabled) {
+      this.startAutoTranslate();
+    } else {
+      this.stopAutoTranslate();
+    }
+  }
+
+  startAutoTranslate() {
+    // Auto-translate when page loads
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', () => this.autoTranslate());
+    } else {
+      this.autoTranslate();
+    }
+
+    // Watch for dynamic content changes
+    this.observer = new MutationObserver((mutations) => {
+      let hasTextChanges = false;
+      mutations.forEach((mutation) => {
+        if (mutation.type === 'childList' || mutation.type === 'characterData') {
+          hasTextChanges = true;
         }
-        
-        // Skip if contenteditable
-        if (parent.isContentEditable || parent.contentEditable === 'true') {
-          return NodeFilter.FILTER_REJECT;
-        }
-        
-        // Skip if invisible
-        const style = window.getComputedStyle(parent);
-        if (style.display === 'none' || style.visibility === 'hidden') {
-          return NodeFilter.FILTER_REJECT;
-        }
-        
-        // Check text content
-        const text = node.nodeValue.trim();
-        if (text.length < 2) return NodeFilter.FILTER_REJECT;
-        
-        // Skip if only numbers or special characters
-        if (!/[a-zA-Z\u0080-\uFFFF]{2,}/.test(text)) {
-          return NodeFilter.FILTER_REJECT;
-        }
-        
-        return NodeFilter.FILTER_ACCEPT;
+      });
+      
+      if (hasTextChanges && !this.isTranslating) {
+        clearTimeout(this.autoTranslateTimeout);
+        this.autoTranslateTimeout = setTimeout(() => this.autoTranslate(), 1000);
       }
-    }
-  );
-  
-  let node;
-  while (node = walker.nextNode()) {
-    nodes.push(node);
-    // Store original text
-    originalTexts.set(node, node.nodeValue);
-  }
-  
-  return nodes;
-}
+    });
 
-// Smart text chunking for better context
-function chunkTexts(nodes, maxChunkSize = 2000) {
-  const chunks = [];
-  let currentChunk = [];
-  let currentSize = 0;
-  
-  for (let i = 0; i < nodes.length; i++) {
-    const text = nodes[i].nodeValue.trim();
-    const textSize = text.length;
+    this.observer.observe(document.body, {
+      childList: true,
+      subtree: true,
+      characterData: true
+    });
+  }
+
+  stopAutoTranslate() {
+    if (this.observer) {
+      this.observer.disconnect();
+      this.observer = null;
+    }
+    clearTimeout(this.autoTranslateTimeout);
+  }
+
+  async autoTranslate() {
+    const settings = await chrome.storage.sync.get(['apiKey', 'targetLanguage']);
     
-    // Start new chunk if size exceeded
-    if (currentSize + textSize > maxChunkSize && currentChunk.length > 0) {
-      chunks.push(currentChunk);
-      currentChunk = [];
-      currentSize = 0;
+    if (settings.apiKey && this.autoTranslateEnabled && !this.isTranslating) {
+      this.translatePage(settings.apiKey, settings.targetLanguage || 'spanish');
+    }
+  }
+
+  async translatePage(apiKey, targetLanguage) {
+    if (this.isTranslating) return;
+    
+    this.isTranslating = true;
+    
+    try {
+      // Extract all text elements
+      const textElements = this.extractTextElements();
+      
+      if (textElements.length === 0) {
+        this.sendProgress(100, 'No text found to translate');
+        return;
+      }
+
+      this.sendProgress(10, 'Extracting text elements...');
+
+      // Group text elements for batch translation
+      const batches = this.createBatches(textElements);
+      
+      this.sendProgress(20, `Processing ${batches.length} batches...`);
+
+      // Translate each batch
+      for (let i = 0; i < batches.length; i++) {
+        const batch = batches[i];
+        const progress = 20 + ((i / batches.length) * 70);
+        
+        this.sendProgress(progress, `Translating batch ${i + 1}/${batches.length}...`);
+        
+        try {
+          const translations = await this.translateBatch(batch, apiKey, targetLanguage);
+          this.applyTranslations(batch, translations);
+        } catch (error) {
+          console.error('Batch translation error:', error);
+          // Continue with next batch
+        }
+        
+        // Small delay to prevent rate limiting
+        await this.delay(200);
+      }
+
+      this.sendProgress(100, 'Translation complete!');
+      this.sendMessage({ action: 'translationComplete' });
+      
+    } catch (error) {
+      console.error('Translation error:', error);
+      this.sendMessage({ 
+        action: 'translationError', 
+        error: error.message || 'Unknown error occurred' 
+      });
+    } finally {
+      this.isTranslating = false;
+    }
+  }
+
+  extractTextElements() {
+    const elements = [];
+    const walker = document.createTreeWalker(
+      document.body,
+      NodeFilter.SHOW_TEXT,
+      {
+        acceptNode: (node) => {
+          // Skip script, style, and other non-visible elements
+          const parent = node.parentElement;
+          if (!parent) return NodeFilter.FILTER_REJECT;
+          
+          const tagName = parent.tagName.toLowerCase();
+          if (['script', 'style', 'noscript', 'iframe'].includes(tagName)) {
+            return NodeFilter.FILTER_REJECT;
+          }
+          
+          // Skip if parent is hidden
+          const style = window.getComputedStyle(parent);
+          if (style.display === 'none' || style.visibility === 'hidden') {
+            return NodeFilter.FILTER_REJECT;
+          }
+          
+          // Only include text nodes with meaningful content
+          const text = node.textContent.trim();
+          if (text.length < 3 || /^[\d\s\W]*$/.test(text)) {
+            return NodeFilter.FILTER_REJECT;
+          }
+          
+          return NodeFilter.FILTER_ACCEPT;
+        }
+      }
+    );
+
+    let node;
+    while (node = walker.nextNode()) {
+      elements.push(node);
+    }
+
+    return elements;
+  }
+
+  createBatches(textElements, maxBatchSize = 10) {
+    const batches = [];
+    
+    for (let i = 0; i < textElements.length; i += maxBatchSize) {
+      batches.push(textElements.slice(i, i + maxBatchSize));
     }
     
-    currentChunk.push({ node: nodes[i], text, index: i });
-    currentSize += textSize;
+    return batches;
   }
-  
-  if (currentChunk.length > 0) {
-    chunks.push(currentChunk);
-  }
-  
-  return chunks;
-}
 
-// Robust translation with retry
-async function translateBatch(texts, apiKey, targetLang, retries = 2) {
-  const cacheKey = texts.join('|||') + targetLang;
-  if (translationCache.has(cacheKey)) {
-    return translationCache.get(cacheKey);
-  }
-  
-  try {
+  async translateBatch(textNodes, apiKey, targetLanguage) {
+    const texts = textNodes.map(node => node.textContent.trim());
+    
+    const prompt = `Translate the following texts to ${targetLanguage}. 
+    Return ONLY the translations in the same order, separated by "|||".
+    Do not add any explanations or additional text.
+    
+    Texts to translate:
+    ${texts.map((text, i) => `${i + 1}. ${text}`).join('\n')}`;
+
     const response = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
       headers: {
@@ -98,162 +213,79 @@ async function translateBatch(texts, apiKey, targetLang, retries = 2) {
       },
       body: JSON.stringify({
         model: 'gpt-3.5-turbo',
-        messages: [{
-          role: 'system',
-          content: `You are a professional translator. Translate the following texts to ${targetLang}. 
-                   Maintain the exact number of lines. Each line is separated by |||.
-                   Preserve formatting, capitalization patterns, and punctuation.
-                   Return ONLY the translations, separated by |||.`
-        }, {
-          role: 'user',
-          content: texts.join('|||')
-        }],
-        temperature: 0.3,
-        max_tokens: 4000
+        messages: [
+          {
+            role: 'user',
+            content: prompt
+          }
+        ],
+        max_tokens: 2000,
+        temperature: 0.3
       })
     });
-    
+
     if (!response.ok) {
       const error = await response.json();
-      throw new Error(error.error?.message || 'Translation failed');
+      throw new Error(error.error?.message || 'API request failed');
     }
-    
+
     const data = await response.json();
-    const content = data.choices[0].message.content;
-    const translations = content.split('|||').map(t => t.trim());
+    const translatedText = data.choices[0].message.content.trim();
     
-    // Cache the result
-    translationCache.set(cacheKey, translations);
+    // Parse the translations
+    const translations = translatedText.split('|||').map(t => t.trim());
+    
+    // Ensure we have the right number of translations
+    if (translations.length !== texts.length) {
+      // Fallback: try to split by numbers
+      const numberedSplit = translatedText.split(/\d+\.\s*/).filter(t => t.trim());
+      if (numberedSplit.length === texts.length) {
+        return numberedSplit.map(t => t.trim());
+      }
+      
+      // If we still don't have the right number, return original texts
+      console.warn('Translation count mismatch, using original texts');
+      return texts;
+    }
     
     return translations;
-  } catch (error) {
-    if (retries > 0) {
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      return translateBatch(texts, apiKey, targetLang, retries - 1);
-    }
-    throw error;
   }
-}
 
-// Progress reporter
-function reportProgress(percent, message) {
-  chrome.runtime.sendMessage({
-    action: 'progress',
-    progress: Math.round(percent),
-    message
-  });
-}
-
-// Main translation handler
-async function translatePage(apiKey, targetLang) {
-  if (isTranslating) return { error: 'Already translating' };
-  
-  isTranslating = true;
-  let wordCount = 0;
-  
-  try {
-    reportProgress(0, 'Analyzing page structure...');
-    
-    // Collect all text nodes
-    const nodes = collectTextNodes();
-    if (nodes.length === 0) {
-      return { error: 'No translatable text found' };
-    }
-    
-    reportProgress(10, `Found ${nodes.length} text elements`);
-    
-    // Create chunks for batch processing
-    const chunks = chunkTexts(nodes);
-    const totalChunks = chunks.length;
-    
-    // Process each chunk
-    for (let i = 0; i < chunks.length; i++) {
-      const chunk = chunks[i];
-      const texts = chunk.map(item => item.text);
-      
-      reportProgress(
-        10 + (i / totalChunks) * 80,
-        `Translating batch ${i + 1} of ${totalChunks}...`
-      );
-      
-      try {
-        const translations = await translateBatch(texts, apiKey, targetLang);
+  applyTranslations(textNodes, translations) {
+    textNodes.forEach((node, index) => {
+      if (index < translations.length && translations[index]) {
+        // Store original text if not already stored
+        if (!this.originalTexts.has(node)) {
+          this.originalTexts.set(node, node.textContent);
+        }
         
-        // Apply translations
-        chunk.forEach((item, j) => {
-          if (translations[j] && translations[j] !== item.text) {
-            item.node.nodeValue = translations[j];
-            wordCount += item.text.split(/\s+/).length;
-          }
-        });
-      } catch (error) {
-        console.error(`Batch ${i + 1} failed:`, error);
-        // Continue with other batches
-      }
-      
-      // Small delay between batches
-      if (i < chunks.length - 1) {
-        await new Promise(resolve => setTimeout(resolve, 100));
-      }
-    }
-    
-    reportProgress(95, 'Finalizing translation...');
-    
-    // Mark page as translated
-    document.documentElement.setAttribute('data-gpt-translated', targetLang);
-    
-    reportProgress(100, 'Translation complete!');
-    
-    return {
-      success: true,
-      stats: {
-        pages: 1,
-        words: wordCount
-      }
-    };
-    
-  } catch (error) {
-    return { error: error.message };
-  } finally {
-    isTranslating = false;
-  }
-}
-
-// Message handler
-chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
-  if (request.action === 'translate') {
-    translatePage(request.apiKey, request.targetLang).then(sendResponse);
-    return true; // Async response
-  }
-  
-  if (request.action === 'getStatus') {
-    sendResponse({ isTranslating, progress: 0, message: '' });
-    return false;
-  }
-  
-  if (request.action === 'restore') {
-    // Restore original text
-    originalTexts.forEach((originalText, node) => {
-      if (node.parentNode) {
-        node.nodeValue = originalText;
+        // Apply translation
+        node.textContent = translations[index];
+        this.translatedTexts.set(node, translations[index]);
       }
     });
-    document.documentElement.removeAttribute('data-gpt-translated');
-    sendResponse({ success: true });
-    return false;
   }
-});
 
-// Auto-translate on page load if enabled
-window.addEventListener('load', async () => {
-  const settings = await chrome.storage.local.get(['autoTranslate', 'apiKey', 'targetLang']);
-  
-  if (settings.autoTranslate && settings.apiKey && settings.targetLang) {
-    // Check if already translated
-    if (!document.documentElement.hasAttribute('data-gpt-translated')) {
-      setTimeout(() => {
-        translatePage(settings.apiKey, settings.targetLang);
-      }, 1000); // Small delay to ensure page is fully loaded
+  sendProgress(progress, text) {
+    this.sendMessage({
+      action: 'translationProgress',
+      progress: Math.round(progress),
+      text: text
+    });
+  }
+
+  sendMessage(message) {
+    try {
+      chrome.runtime.sendMessage(message);
+    } catch (error) {
+      // Ignore errors if popup is closed
     }
   }
-});
+
+  delay(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+  }
+}
+
+// Initialize the translator
+const translator = new WebPageTranslator();
