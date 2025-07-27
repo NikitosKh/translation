@@ -1,152 +1,99 @@
-const $ = id => document.getElementById(id);
-
-let isTranslating = false;
-
-// Initialize
 document.addEventListener('DOMContentLoaded', async () => {
+  const apiKeyInput = document.getElementById('apiKey');
+  const targetLanguageSelect = document.getElementById('targetLanguage');
+  const autoTranslateToggle = document.getElementById('autoTranslate');
+  const translateButton = document.getElementById('translateNow');
+  const statusDiv = document.getElementById('status');
+  const progressContainer = document.getElementById('progressContainer');
+  const progressFill = document.getElementById('progressFill');
+  const progressText = document.getElementById('progressText');
+
   // Load saved settings
-  const settings = await chrome.storage.local.get(['apiKey', 'targetLang', 'autoTranslate', 'stats']);
+  const settings = await chrome.storage.sync.get(['apiKey', 'targetLanguage', 'autoTranslate']);
   
-  if (settings.apiKey) $('apiKey').value = settings.apiKey;
-  if (settings.targetLang) $('targetLang').value = settings.targetLang;
-  if (settings.autoTranslate) {
-    $('autoToggle').classList.add('active');
+  if (settings.apiKey) {
+    apiKeyInput.value = settings.apiKey;
   }
   
-  // Update stats
-  updateStats(settings.stats || {});
+  if (settings.targetLanguage) {
+    targetLanguageSelect.value = settings.targetLanguage;
+  }
   
-  // Check if currently translating
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  chrome.tabs.sendMessage(tab.id, { action: 'getStatus' }, response => {
-    if (response?.isTranslating) {
-      showProgress(response.progress, response.message);
+  if (settings.autoTranslate) {
+    autoTranslateToggle.classList.add('active');
+  }
+
+  // Save settings on change
+  apiKeyInput.addEventListener('input', () => {
+    chrome.storage.sync.set({ apiKey: apiKeyInput.value });
+  });
+
+  targetLanguageSelect.addEventListener('change', () => {
+    chrome.storage.sync.set({ targetLanguage: targetLanguageSelect.value });
+  });
+
+  autoTranslateToggle.addEventListener('click', () => {
+    autoTranslateToggle.classList.toggle('active');
+    const isActive = autoTranslateToggle.classList.contains('active');
+    chrome.storage.sync.set({ autoTranslate: isActive });
+    
+    // Send message to content script
+    chrome.tabs.query({active: true, currentWindow: true}, (tabs) => {
+      chrome.tabs.sendMessage(tabs[0].id, {
+        action: 'toggleAutoTranslate',
+        enabled: isActive
+      });
+    });
+  });
+
+  translateButton.addEventListener('click', () => {
+    if (!apiKeyInput.value.trim()) {
+      showStatus('Please enter your OpenAI API key', 'error');
+      return;
+    }
+
+    showProgress();
+    
+    chrome.tabs.query({active: true, currentWindow: true}, (tabs) => {
+      chrome.tabs.sendMessage(tabs[0].id, {
+        action: 'translatePage',
+        apiKey: apiKeyInput.value,
+        targetLanguage: targetLanguageSelect.value
+      });
+    });
+  });
+
+  function showStatus(message, type = '') {
+    statusDiv.textContent = message;
+    statusDiv.className = `status ${type}`;
+    statusDiv.style.display = 'block';
+    
+    setTimeout(() => {
+      statusDiv.style.display = 'none';
+    }, 3000);
+  }
+
+  function showProgress() {
+    progressContainer.style.display = 'block';
+    progressFill.style.width = '0%';
+    progressText.textContent = 'Preparing translation...';
+  }
+
+  function hideProgress() {
+    progressContainer.style.display = 'none';
+  }
+
+  // Listen for messages from content script
+  chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+    if (message.action === 'translationProgress') {
+      progressFill.style.width = `${message.progress}%`;
+      progressText.textContent = message.text;
+    } else if (message.action === 'translationComplete') {
+      hideProgress();
+      showStatus('Translation completed successfully!', 'success');
+    } else if (message.action === 'translationError') {
+      hideProgress();
+      showStatus(`Error: ${message.error}`, 'error');
     }
   });
 });
-
-// Toggle auto-translate
-$('autoToggle').onclick = async () => {
-  const isActive = $('autoToggle').classList.toggle('active');
-  await chrome.storage.local.set({ autoTranslate: isActive });
-  
-  if (isActive) {
-    showSuccess('Auto-translate enabled');
-    // Translate current page if not already translated
-    translateCurrentPage();
-  } else {
-    showSuccess('Auto-translate disabled');
-  }
-};
-
-// Save settings on change
-$('apiKey').onchange = async () => {
-  await chrome.storage.local.set({ apiKey: $('apiKey').value });
-};
-
-$('targetLang').onchange = async () => {
-  await chrome.storage.local.set({ targetLang: $('targetLang').value });
-  // Auto-translate if enabled
-  const settings = await chrome.storage.local.get(['autoTranslate']);
-  if (settings.autoTranslate) {
-    translateCurrentPage();
-  }
-};
-
-// Translate current page
-async function translateCurrentPage() {
-  if (isTranslating) return;
-  
-  const apiKey = $('apiKey').value;
-  const targetLang = $('targetLang').value;
-  
-  if (!apiKey) {
-    showError('Please enter your OpenAI API key');
-    return;
-  }
-  
-  isTranslating = true;
-  hideMessages();
-  
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  
-  chrome.tabs.sendMessage(
-    tab.id,
-    { action: 'translate', apiKey, targetLang },
-    response => {
-      isTranslating = false;
-      if (response?.error) {
-        showError(response.error);
-        hideProgress();
-      } else if (response?.success) {
-        showSuccess('Translation complete!');
-        updateStats(response.stats);
-        hideProgress();
-      }
-    }
-  );
-}
-
-// Progress handling
-chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
-  if (request.action === 'progress') {
-    showProgress(request.progress, request.message);
-  }
-});
-
-function showProgress(percent, message) {
-  $('progressSection').style.display = 'block';
-  $('progressFill').style.width = percent + '%';
-  $('progressText').textContent = message;
-}
-
-function hideProgress() {
-  $('progressSection').style.display = 'none';
-}
-
-// Messages
-function showError(message) {
-  $('error').textContent = message;
-  $('error').style.display = 'block';
-  setTimeout(hideMessages, 5000);
-}
-
-function showSuccess(message) {
-  $('success').textContent = message;
-  $('success').style.display = 'block';
-  setTimeout(hideMessages, 3000);
-}
-
-function hideMessages() {
-  $('error').style.display = 'none';
-  $('success').style.display = 'none';
-}
-
-// Stats
-async function updateStats(newStats) {
-  const today = new Date().toDateString();
-  const stats = await chrome.storage.local.get(['stats']);
-  const currentStats = stats.stats || { pagesTotal: 0, wordsToday: 0, date: today };
-  
-  // Reset daily counter if new day
-  if (currentStats.date !== today) {
-    currentStats.wordsToday = 0;
-    currentStats.date = today;
-  }
-  
-  // Update with new stats
-  if (newStats.pages) currentStats.pagesTotal = (currentStats.pagesTotal || 0) + newStats.pages;
-  if (newStats.words) currentStats.wordsToday = (currentStats.wordsToday || 0) + newStats.words;
-  
-  // Save and display
-  await chrome.storage.local.set({ stats: currentStats });
-  $('pagesTranslated').textContent = currentStats.pagesTotal || 0;
-  $('wordsTranslated').textContent = formatNumber(currentStats.wordsToday || 0);
-}
-
-function formatNumber(num) {
-  if (num >= 1000) {
-    return (num / 1000).toFixed(1) + 'k';
-  }
-  return num.toString();
-}
