@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <style>
+    body { width: 300px; padding: 10px; font-family: monospace; }
+    input, select, button { width: 100%; margin: 5px 0; padding: 8px; }
+    button { background: #000; color: #fff; border: none; cursor: pointer; }
+    button:hover { background: #333; }
+    #status { color: #666; font-size: 12px; }
+  </style>
+</head>
+<body>
+  <input type="password" id="apiKey" placeholder="OpenAI API Key">
+  <select id="targetLang">
+    <option value="Spanish">Spanish</option>
+    <option value="French">French</option>
+    <option value="German">German</option>
+    <option value="Japanese">Japanese</option>
+    <option value="Chinese">Chinese</option>
+    <option value="Russian">Russian</option>
+  </select>
+  <button id="translate">Translate Page</button>
+  <div id="status"></div>
+  <script src="popup.js"></script>
+</body>
+</html>
