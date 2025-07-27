@@ -2,25 +2,244 @@
 <html>
 <head>
   <style>
-    body { width: 300px; padding: 10px; font-family: monospace; }
-    input, select, button { width: 100%; margin: 5px 0; padding: 8px; }
-    button { background: #000; color: #fff; border: none; cursor: pointer; }
-    button:hover { background: #333; }
-    #status { color: #666; font-size: 12px; }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    
+    body {
+      width: 320px;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: #0a0a0a;
+      color: #fff;
+    }
+    
+    .header {
+      padding: 20px;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      text-align: center;
+    }
+    
+    .header h1 {
+      font-size: 18px;
+      font-weight: 600;
+      margin-bottom: 4px;
+    }
+    
+    .header p {
+      font-size: 12px;
+      opacity: 0.9;
+    }
+    
+    .container {
+      padding: 20px;
+    }
+    
+    .toggle-section {
+      background: #1a1a1a;
+      border-radius: 12px;
+      padding: 16px;
+      margin-bottom: 16px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    
+    .toggle-label {
+      font-size: 14px;
+      color: #fff;
+    }
+    
+    .toggle {
+      position: relative;
+      width: 50px;
+      height: 26px;
+      background: #333;
+      border-radius: 13px;
+      cursor: pointer;
+      transition: 0.3s;
+    }
+    
+    .toggle.active {
+      background: #667eea;
+    }
+    
+    .toggle-circle {
+      position: absolute;
+      top: 3px;
+      left: 3px;
+      width: 20px;
+      height: 20px;
+      background: #fff;
+      border-radius: 50%;
+      transition: 0.3s;
+    }
+    
+    .toggle.active .toggle-circle {
+      transform: translateX(24px);
+    }
+    
+    .input-group {
+      margin-bottom: 16px;
+    }
+    
+    .input-group label {
+      display: block;
+      font-size: 12px;
+      color: #888;
+      margin-bottom: 6px;
+    }
+    
+    .input-group input,
+    .input-group select {
+      width: 100%;
+      padding: 12px;
+      background: #1a1a1a;
+      border: 1px solid #333;
+      border-radius: 8px;
+      color: #fff;
+      font-size: 14px;
+      transition: 0.2s;
+    }
+    
+    .input-group input:focus,
+    .input-group select:focus {
+      outline: none;
+      border-color: #667eea;
+      background: #222;
+    }
+    
+    .progress-section {
+      display: none;
+      background: #1a1a1a;
+      border-radius: 12px;
+      padding: 16px;
+      margin-bottom: 16px;
+    }
+    
+    .progress-bar {
+      width: 100%;
+      height: 4px;
+      background: #333;
+      border-radius: 2px;
+      overflow: hidden;
+      margin: 12px 0;
+    }
+    
+    .progress-fill {
+      height: 100%;
+      background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
+      width: 0%;
+      transition: width 0.3s ease;
+    }
+    
+    .progress-text {
+      font-size: 12px;
+      color: #888;
+      text-align: center;
+    }
+    
+    .stats {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+      margin-top: 16px;
+    }
+    
+    .stat {
+      background: #1a1a1a;
+      padding: 12px;
+      border-radius: 8px;
+      text-align: center;
+    }
+    
+    .stat-value {
+      font-size: 20px;
+      font-weight: 600;
+      color: #667eea;
+    }
+    
+    .stat-label {
+      font-size: 11px;
+      color: #666;
+      margin-top: 4px;
+    }
+    
+    .error {
+      background: #ff4444;
+      color: #fff;
+      padding: 12px;
+      border-radius: 8px;
+      font-size: 12px;
+      margin-top: 12px;
+      display: none;
+    }
+    
+    .success {
+      background: #00c851;
+      color: #fff;
+      padding: 12px;
+      border-radius: 8px;
+      font-size: 12px;
+      margin-top: 12px;
+      display: none;
+    }
   </style>
 </head>
 <body>
-  <input type="password" id="apiKey" placeholder="OpenAI API Key">
-  <select id="targetLang">
-    <option value="Spanish">Spanish</option>
-    <option value="French">French</option>
-    <option value="German">German</option>
-    <option value="Japanese">Japanese</option>
-    <option value="Chinese">Chinese</option>
-    <option value="Russian">Russian</option>
-  </select>
-  <button id="translate">Translate Page</button>
-  <div id="status"></div>
+  <div class="header">
+    <h1>GPT Translator</h1>
+    <p>AI-powered webpage translation</p>
+  </div>
+  
+  <div class="container">
+    <div class="toggle-section">
+      <span class="toggle-label">Auto-translate pages</span>
+      <div class="toggle" id="autoToggle">
+        <div class="toggle-circle"></div>
+      </div>
+    </div>
+    
+    <div class="input-group">
+      <label>OpenAI API Key</label>
+      <input type="password" id="apiKey" placeholder="sk-...">
+    </div>
+    
+    <div class="input-group">
+      <label>Target Language</label>
+      <select id="targetLang">
+        <option value="Spanish">Español</option>
+        <option value="French">Français</option>
+        <option value="German">Deutsch</option>
+        <option value="Japanese">日本語</option>
+        <option value="Chinese">中文</option>
+        <option value="Korean">한국어</option>
+        <option value="Russian">Русский</option>
+        <option value="Portuguese">Português</option>
+        <option value="Italian">Italiano</option>
+        <option value="Dutch">Nederlands</option>
+      </select>
+    </div>
+    
+    <div class="progress-section" id="progressSection">
+      <div class="progress-text" id="progressText">Analyzing page...</div>
+      <div class="progress-bar">
+        <div class="progress-fill" id="progressFill"></div>
+      </div>
+    </div>
+    
+    <div class="stats">
+      <div class="stat">
+        <div class="stat-value" id="pagesTranslated">0</div>
+        <div class="stat-label">Pages Translated</div>
+      </div>
+      <div class="stat">
+        <div class="stat-value" id="wordsTranslated">0</div>
+        <div class="stat-label">Words Today</div>
+      </div>
+    </div>
+    
+    <div class="error" id="error"></div>
+    <div class="success" id="success"></div>
+  </div>
+  
   <script src="popup.js"></script>
 </body>
 </html>

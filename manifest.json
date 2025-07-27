@@ -1,14 +1,18 @@
 {
   "manifest_version": 3,
   "name": "GPT Translator",
-  "version": "1.0",
-  "description": "Translate with ChatGPT",
-  "permissions": ["activeTab", "storage"],
+  "version": "2.0",
+  "description": "Beautiful AI-powered webpage translator",
+  "permissions": ["activeTab", "storage", "tabs"],
   "action": {
     "default_popup": "popup.html"
   },
   "content_scripts": [{
     "matches": ["<all_urls>"],
-    "js": ["content.js"]
-  }]
+    "js": ["content.js"],
+    "run_at": "document_end"
+  }],
+  "background": {
+    "service_worker": "background.js"
+  }
 }
